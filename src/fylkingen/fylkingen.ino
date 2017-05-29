@@ -2,11 +2,24 @@
 #include <Wire.h>
 // #include <Firmata.h>
 
+/*
+ * Function that printf and related will use to print
+ */
+int serial_putchar(char c, FILE* f)
+{
+    if (c == '\n')
+    {
+      serial_putchar('\r', f);
+    }
+    return Serial.write(c) == 1? 0 : 1;
+}
+
 /****************
  * Global state *
  ****************/
 
-double sessionPressureBaseline; 
+FILE serial_stdout;
+double sessionPressureBaseline;
 #define SAMPLING_DELAY 80 // Must be greater than 60ms
 
 /*********************************
@@ -176,7 +189,13 @@ long getUltrasoundPingDistance(short trigPin, short echoPin)
 void setup()
 {
   Serial.begin(9600);
-  Serial.println("REBOOT");
+  Serial.println(F("REBOOT"));
+
+  // Set up stdout
+  fdev_setup_stream(&serial_stdout, serial_putchar, NULL, _FDEV_SETUP_WRITE);
+  stdout = &serial_stdout;
+
+  printf("My favorite number is %6d!\n", 12);
 
   setupBarometricSensor();
   setupUltrasound(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
