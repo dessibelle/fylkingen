@@ -1,26 +1,43 @@
 #include <SFE_BMP180.h>
 #include <Wire.h>
-// #include <Firmata.h>
+#include <Firmata.h>
 
-/*
- * Function that printf and related will use to print
- */
-int serial_putchar(char c, FILE* f)
+
+/***********************************
+ * Internal communication protocol *
+ ***********************************/
+
+struct dataRecord
 {
-    if (c == '\n')
-    {
-      serial_putchar('\r', f);
-    }
-    return Serial.write(c) == 1? 0 : 1;
+  float temperature;
+  float pressure;
+  float sealevelPressure;
+  float altitude;
+  float pressureDifferential;
+  int distance;
+};
+
+typedef struct dataRecord Record;
+
+void CreateRecord(Record &record, float temperature, float pressure, float sealevelPressure, float altitude, float pressureDifferential, int distance) {
+  record.temperature = temperature;
+  record.pressure = pressure;
+  record.sealevelPressure = sealevelPressure;
+  record.altitude = altitude;
+  record.pressureDifferential = pressureDifferential;
+  record.distance = distance;
 }
+
 
 /****************
  * Global state *
  ****************/
 
-FILE serial_stdout;
 double sessionPressureBaseline;
-#define SAMPLING_DELAY 80 // Must be greater than 60ms
+#define SAMPLING_DELAY 500// Must be greater than 60ms
+
+#define FIRMATA_OUTPUT_PIN 8
+#define FIRMATA_BAUD_RATE 57600
 
 /*********************************
  * BMP180 Barometic sensor setup *
@@ -52,7 +69,7 @@ SFE_BMP180 barometer; // BPM180 pressure struct
 #define ULRTASOUND_ECHO_PIN 12
 #define ULTRASOUND_UPPER_BOUNDS 2000 // Theoretically 4 metres, but 2 works better
 #define ULTRASOUND_LOWER_BOUNDS 20
-
+#define ULTRASOUND_PULSE_TIMEOUT 11500 // Almost 2 m at 340 m/s
 
 /*************************************
  * BMP180 Barometic sensor functions *
@@ -62,14 +79,16 @@ void setupBarometricSensor()
 {
   if (barometer.begin())
   {
-    Serial.print(F("BMP180 init success, altitude: "));
-    Serial.print(BAROMETER_ALTITUDE);
-    Serial.print(F(", oversampling mode: "));
-    Serial.println(BAROMETER_OVERSAMPLING_MODE);
+    // Serial.print(F("BMP180 init success, altitude: "));
+    // Serial.print(BAROMETER_ALTITUDE);
+    // Serial.print(F(" m, baseline (sealevel) pressure: "));
+    // Serial.print(BAROMETER_BASELINE_PRESSURE);
+    // Serial.print(F(" mbar, oversampling mode: "));
+    // Serial.println(BAROMETER_OVERSAMPLING_MODE);
   } else
   {
     // Oops, something went wrong, this is usually a connection problem
-    Serial.println(F("BMP180 init fail\n\n"));
+    // Serial.println(F("BMP180 init fail\n\n"));
     while(1); // Pause forever.
   }
 }
@@ -88,11 +107,11 @@ short getTemeprature(double &temperature)
     status = barometer.getTemperature(temperature);
     if (status != 1)
     {
-      Serial.println(F("Error retrieving temperature measurement\n"));
+      // Serial.println(F("Error retrieving temperature measurement\n"));
     }
   } else
   {
-    Serial.println(F("Error starting temperature measurement\n"));
+    // Serial.println(F("Error starting temperature measurement\n"));
   }
   return status;
 }
@@ -113,11 +132,11 @@ short getPressure(double &pressure, double temperature, char oversamplingMode)
     status = barometer.getPressure(pressure, temperature);
     if (status != 1)
     {
-      Serial.println(F("Error retrieving pressure measurement\n"));
+      // Serial.println(F("Error retrieving pressure measurement\n"));
     }
   } else
   {
-    Serial.println(F("Error starting pressure measurement\n"));
+    // Serial.println(F("Error starting pressure measurement\n"));
   }
   return status;
 }
@@ -149,6 +168,11 @@ double getAltitude(double absolutePressure, double pressureBaseline)
 void setupUltrasound(short trigPin, short echoPin) {
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
+
+  // Serial.print(F("HC-SR04 ultrasound sensor using trig pin: "));
+  // Serial.print(trigPin);
+  // Serial.print(F(", echo pin: "));
+  // Serial.println(echoPin);
 }
 
 void HCSR04_do_trig(short trigPin) {
@@ -170,16 +194,52 @@ void HCSR04_do_trig(short trigPin) {
 long getUltrasoundPingDuration(short trigPin, short echoPin)
 {
   HCSR04_do_trig(trigPin);
-  return pulseIn(echoPin, HIGH);
+  return pulseIn(echoPin, HIGH, ULTRASOUND_PULSE_TIMEOUT);
+}
+
+/*
+ * Returns the speed of sound (m/s) for a given air temperature (C)
+ *
+ * See https://en.wikipedia.org/wiki/Speed_of_sound#Practical_formula_for_dry_air
+ */
+float getSpeedOfSoundForTemperature(float temperature)
+{
+  return 331.3 + 0.606 * temperature;
 }
 
 /*
  * Returns the ping distance of the HC-SR04 ultrasound sensor
  */
-long getUltrasoundPingDistance(short trigPin, short echoPin)
+long getUltrasoundPingDistance(short trigPin, short echoPin, float speedOfSound)
 {
   long duration = getUltrasoundPingDuration(trigPin, echoPin);
-  return (duration/2) / 2.91;
+  return (duration / 2) / (1000 / speedOfSound);
+}
+
+/**********************************
+ * Firmata communicatoin protocol *
+ **********************************/
+
+void analogWriteCallback(byte pin, int value)
+{
+  if (IS_PIN_PWM(pin)) {
+    pinMode(PIN_TO_DIGITAL(pin), OUTPUT);
+    analogWrite(PIN_TO_PWM(pin), value);
+  }
+}
+
+void setupFirmata() {
+  Firmata.setFirmwareVersion(FIRMATA_FIRMWARE_MAJOR_VERSION, FIRMATA_FIRMWARE_MINOR_VERSION);
+  Firmata.attach(ANALOG_MESSAGE, analogWriteCallback);
+  Firmata.begin((int)FIRMATA_BAUD_RATE);
+
+
+  // Serial.print(F("Firmata library v"));
+  // Serial.print(FIRMATA_FIRMWARE_MAJOR_VERSION);
+  // Serial.print(F("."));
+  // Serial.print(FIRMATA_FIRMWARE_MINOR_VERSION);
+  // Serial.print(F(", using output pin: "));
+  // Serial.print(FIRMATA_OUTPUT_PIN);
 }
 
 /****************
@@ -188,19 +248,17 @@ long getUltrasoundPingDistance(short trigPin, short echoPin)
 
 void setup()
 {
-  Serial.begin(9600);
-  Serial.println(F("REBOOT"));
-
-  // Set up stdout
-  fdev_setup_stream(&serial_stdout, serial_putchar, NULL, _FDEV_SETUP_WRITE);
-  stdout = &serial_stdout;
-
-  printf("My favorite number is %6d!\n", 12);
+  // Serial.begin(9600);
+  // Serial.print(F("REBOOT, samling delay: "));
+  // Serial.print(SAMPLING_DELAY);
+  // Serial.println(F(" ms"));
 
   setupBarometricSensor();
   setupUltrasound(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
 
-  Serial.println(F("\n--------\n"));
+  setupFirmata();
+
+  // Serial.println(F("\n--------\n"));
 }
 
 void loop() {
@@ -216,33 +274,49 @@ void loop() {
   }
   pressureDifferential = sealevelPressure - sessionPressureBaseline;
 
-  Serial.print(F("Temperature: "));
-  Serial.print(temperature, 2);
-  Serial.println(F("°C"));
-  Serial.print(F("Pressure (absolute): "));
-  Serial.print(pressure, 2);
-  Serial.println(F(" mbar"));
-  Serial.print(F("Pressure (sealevel): "));
-  Serial.print(sealevelPressure, 2);
-  Serial.println(F(" mbar"));
-  Serial.print(F("Altitude: "));
-  Serial.print(altitude, 2);
-  Serial.println(F(" m"));
-  Serial.print(F("Pressure differential: "));
-  Serial.print(pressureDifferential, 2);
-  Serial.println(F(" mbar"));
+  // Serial.print(F("Temperature: "));
+  // Serial.print(temperature, 2);
+  // Serial.println(F("°C"));
+  // Serial.print(F("Pressure (absolute): "));
+  // Serial.print(pressure, 2);
+  // Serial.println(F(" mbar"));
+  // Serial.print(F("Pressure (sealevel): "));
+  // Serial.print(sealevelPressure, 2);
+  // Serial.println(F(" mbar"));
+  // Serial.print(F("Altitude: "));
+  // Serial.print(altitude, 2);
+  // Serial.println(F(" m"));
+  // Serial.print(F("Pressure differential: "));
+  // Serial.print(pressureDifferential, 2);
+  // Serial.println(F(" mbar"));
 
-  long distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
+  float speedOfSound = getSpeedOfSoundForTemperature(temperature);
+  long distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN, speedOfSound);
   if (distance >= ULTRASOUND_UPPER_BOUNDS || distance <= ULTRASOUND_LOWER_BOUNDS)
   {
-    Serial.println(F("Out of range"));
+    // Serial.println(F("Out of range"));
   } else
   {
-    Serial.print(F("Distance: "));
-    Serial.print(distance);
-    Serial.println(F(" mm"));
+    // Serial.print(F("Distance: "));
+    // Serial.print(distance);
+    // Serial.println(F(" mm"));
   }
 
-  Serial.println(F("\n--------\n"));
+  Record record;
+  CreateRecord(record, temperature, pressure, sealevelPressure, altitude, pressureDifferential, distance);
+
+  while (Firmata.available()) {
+    Firmata.processInput();
+  }
+
+  // Firmata.sendAnalog(FIRMATA_OUTPUT_PIN, record.distance);
+  Firmata.sendAnalog(2, record.temperature);
+  Firmata.sendAnalog(3, record.pressure);
+  Firmata.sendAnalog(4, record.sealevelPressure);
+  Firmata.sendAnalog(5, record.altitude);
+  Firmata.sendAnalog(6, record.pressureDifferential);
+  Firmata.sendAnalog(7, record.distance);
+
+  // Serial.println(F("\n--------\n"));
   delay(SAMPLING_DELAY);
 }
