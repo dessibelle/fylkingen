@@ -1,7 +1,17 @@
 #include <SFE_BMP180.h>
 #include <Wire.h>
-#include <Firmata.h>
 
+#define DEBUG 1 // This enables debug logging
+
+#ifdef DEBUG
+  #define DEBUG_PRINT(x)       Serial.print (x)
+  #define DEBUG_PRINT_DEC(x)   Serial.print (x, DEC)
+  #define DEBUG_PRINT_LN(x)    Serial.println (x)
+#else
+  #define DEBUG_PRINT(x)
+  #define DEBUG_PRINT_DEC(x)
+  #define DEBUG_PRINT_LN(x)
+#endif
 
 /***********************************
  * Internal communication protocol *
@@ -15,17 +25,20 @@ struct dataRecord
   float altitude;
   float pressureDifferential;
   int distance;
+  int heartrate;
 };
 
 typedef struct dataRecord Record;
 
-void CreateRecord(Record &record, float temperature, float pressure, float sealevelPressure, float altitude, float pressureDifferential, int distance) {
+void CreateRecord(Record &record, float temperature, float pressure, float sealevelPressure, float altitude, float pressureDifferential, int distance, int heartrate)
+{
   record.temperature = temperature;
   record.pressure = pressure;
   record.sealevelPressure = sealevelPressure;
   record.altitude = altitude;
   record.pressureDifferential = pressureDifferential;
   record.distance = distance;
+  record.heartrate = heartrate;
 }
 
 
@@ -34,10 +47,9 @@ void CreateRecord(Record &record, float temperature, float pressure, float seale
  ****************/
 
 double sessionPressureBaseline;
-#define SAMPLING_DELAY 500// Must be greater than 60ms
+#define SAMPLING_DELAY 500 // Must be greater than 60ms
 
-#define FIRMATA_OUTPUT_PIN 8
-#define FIRMATA_BAUD_RATE 57600
+int currentHeartrate = 60; // Default heart rate to 60, until first measurement completes
 
 /*********************************
  * BMP180 Barometic sensor setup *
@@ -71,6 +83,17 @@ SFE_BMP180 barometer; // BPM180 pressure struct
 #define ULTRASOUND_LOWER_BOUNDS 20
 #define ULTRASOUND_PULSE_TIMEOUT 11500 // Almost 2 m at 340 m/s
 
+/**************************************
+ * Grove - Ear-clip Heart Rate sensor *
+ **************************************/
+
+#define HEARTRATE_INTERRUPT_PIN 2          // Pin used for heartreate sensor
+#define HEARTRATE_MAX_PULSE_INTERVAL 2000  // No heartbeat for this many ms - reset counter
+#define HEARTRATE_NUM_SAMPLES 20           // Number of samples needed for calculation
+
+unsigned char heartrateCounter;
+unsigned long heartrateSamples[HEARTRATE_NUM_SAMPLES];
+
 /*************************************
  * BMP180 Barometic sensor functions *
  *************************************/
@@ -79,16 +102,16 @@ void setupBarometricSensor()
 {
   if (barometer.begin())
   {
-    // Serial.print(F("BMP180 init success, altitude: "));
-    // Serial.print(BAROMETER_ALTITUDE);
-    // Serial.print(F(" m, baseline (sealevel) pressure: "));
-    // Serial.print(BAROMETER_BASELINE_PRESSURE);
-    // Serial.print(F(" mbar, oversampling mode: "));
-    // Serial.println(BAROMETER_OVERSAMPLING_MODE);
+    DEBUG_PRINT(F("BMP180 init success, altitude: "));
+    DEBUG_PRINT(BAROMETER_ALTITUDE);
+    DEBUG_PRINT(F(" m, baseline (sealevel) pressure: "));
+    DEBUG_PRINT(BAROMETER_BASELINE_PRESSURE);
+    DEBUG_PRINT(F(" mbar, oversampling mode: "));
+    DEBUG_PRINT_LN(BAROMETER_OVERSAMPLING_MODE);
   } else
   {
     // Oops, something went wrong, this is usually a connection problem
-    // Serial.println(F("BMP180 init fail\n\n"));
+    DEBUG_PRINT_LN(F("BMP180 init fail\n\n"));
     while(1); // Pause forever.
   }
 }
@@ -107,11 +130,11 @@ short getTemeprature(double &temperature)
     status = barometer.getTemperature(temperature);
     if (status != 1)
     {
-      // Serial.println(F("Error retrieving temperature measurement\n"));
+      DEBUG_PRINT_LN(F("Error retrieving temperature measurement\n"));
     }
   } else
   {
-    // Serial.println(F("Error starting temperature measurement\n"));
+    DEBUG_PRINT_LN(F("Error starting temperature measurement\n"));
   }
   return status;
 }
@@ -132,11 +155,11 @@ short getPressure(double &pressure, double temperature, char oversamplingMode)
     status = barometer.getPressure(pressure, temperature);
     if (status != 1)
     {
-      // Serial.println(F("Error retrieving pressure measurement\n"));
+      DEBUG_PRINT_LN(F("Error retrieving pressure measurement\n"));
     }
   } else
   {
-    // Serial.println(F("Error starting pressure measurement\n"));
+    DEBUG_PRINT_LN(F("Error starting pressure measurement\n"));
   }
   return status;
 }
@@ -169,10 +192,10 @@ void setupUltrasound(short trigPin, short echoPin) {
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
-  // Serial.print(F("HC-SR04 ultrasound sensor using trig pin: "));
-  // Serial.print(trigPin);
-  // Serial.print(F(", echo pin: "));
-  // Serial.println(echoPin);
+  DEBUG_PRINT(F("HC-SR04 ultrasound sensor using trig pin: "));
+  DEBUG_PRINT(trigPin);
+  DEBUG_PRINT(F(", echo pin: "));
+  DEBUG_PRINT_LN(echoPin);
 }
 
 void HCSR04_do_trig(short trigPin) {
@@ -216,30 +239,56 @@ long getUltrasoundPingDistance(short trigPin, short echoPin, float speedOfSound)
   return (duration / 2) / (1000 / speedOfSound);
 }
 
-/**********************************
- * Firmata communicatoin protocol *
- **********************************/
+/************************************************
+ * Grove - Ear-clip Heart Rate sensor functions *
+ ************************************************/
 
-void analogWriteCallback(byte pin, int value)
+void resetHeartrateSamplesArray()
 {
-  if (IS_PIN_PWM(pin)) {
-    pinMode(PIN_TO_DIGITAL(pin), OUTPUT);
-    analogWrite(PIN_TO_PWM(pin), value);
+  for (unsigned char i = 0; i < HEARTRATE_NUM_SAMPLES; i++)
+  {
+    heartrateSamples[i] = 0;
+  }
+  heartrateCounter = 0;
+}
+
+void setupHeartrate(byte interruptPin)
+{
+  resetHeartrateSamplesArray();
+
+  pinMode(interruptPin, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(interruptPin), heartrateInterrupt, RISING);
+}
+
+void heartrateInterrupt()
+{
+  long delta = logHeartbeat(heartrateCounter);
+
+  if (delta >= HEARTRATE_MAX_PULSE_INTERVAL)
+  {
+    /* Sample took to long, something is wrong. Start over. */
+    return resetHeartrateSamplesArray();
+  }
+
+  heartrateCounter++;
+
+  if (heartrateCounter >= HEARTRATE_NUM_SAMPLES)
+  {
+    // Set global state
+    currentHeartrate = (HEARTRATE_NUM_SAMPLES * 60000) / (heartrateSamples[HEARTRATE_NUM_SAMPLES - 1] - heartrateSamples[0]);
+    heartrateCounter = 0;
   }
 }
 
-void setupFirmata() {
-  Firmata.setFirmwareVersion(FIRMATA_FIRMWARE_MAJOR_VERSION, FIRMATA_FIRMWARE_MINOR_VERSION);
-  Firmata.attach(ANALOG_MESSAGE, analogWriteCallback);
-  Firmata.begin((int)FIRMATA_BAUD_RATE);
+long logHeartbeat(unsigned char idx)
+{
+  heartrateSamples[idx] = millis();
 
+  short lastIdx = !!idx ? idx - 1 : HEARTRATE_NUM_SAMPLES - 1;
+  unsigned long thisValue = heartrateSamples[idx];
+  unsigned long lastValue = heartrateSamples[idx - 1];
 
-  // Serial.print(F("Firmata library v"));
-  // Serial.print(FIRMATA_FIRMWARE_MAJOR_VERSION);
-  // Serial.print(F("."));
-  // Serial.print(FIRMATA_FIRMWARE_MINOR_VERSION);
-  // Serial.print(F(", using output pin: "));
-  // Serial.print(FIRMATA_OUTPUT_PIN);
+  return max(lastValue - thisValue, 0);
 }
 
 /****************
@@ -248,17 +297,30 @@ void setupFirmata() {
 
 void setup()
 {
-  // Serial.begin(9600);
-  // Serial.print(F("REBOOT, samling delay: "));
-  // Serial.print(SAMPLING_DELAY);
-  // Serial.println(F(" ms"));
+  Serial.begin(9600);
+
+  DEBUG_PRINT(F("REBOOT, samling delay: "));
+  DEBUG_PRINT(SAMPLING_DELAY);
+  DEBUG_PRINT_LN(F(" ms"));
 
   setupBarometricSensor();
   setupUltrasound(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
+  setupHeartrate(HEARTRATE_INTERRUPT_PIN);
 
-  setupFirmata();
+  // setupFirmata();
 
-  // Serial.println(F("\n--------\n"));
+  DEBUG_PRINT_LN(F("\n--------\n"));
+}
+
+void serialSendRecord(Record record)
+{
+  Serial.println(record.temperature);
+  Serial.println(record.pressure);
+  Serial.println(record.sealevelPressure);
+  Serial.println(record.altitude);
+  Serial.println(record.pressureDifferential);
+  Serial.println(record.distance);
+  Serial.println(record.heartrate);
 }
 
 void loop() {
@@ -274,49 +336,46 @@ void loop() {
   }
   pressureDifferential = sealevelPressure - sessionPressureBaseline;
 
-  // Serial.print(F("Temperature: "));
-  // Serial.print(temperature, 2);
-  // Serial.println(F("°C"));
-  // Serial.print(F("Pressure (absolute): "));
-  // Serial.print(pressure, 2);
-  // Serial.println(F(" mbar"));
-  // Serial.print(F("Pressure (sealevel): "));
-  // Serial.print(sealevelPressure, 2);
-  // Serial.println(F(" mbar"));
-  // Serial.print(F("Altitude: "));
-  // Serial.print(altitude, 2);
-  // Serial.println(F(" m"));
-  // Serial.print(F("Pressure differential: "));
-  // Serial.print(pressureDifferential, 2);
-  // Serial.println(F(" mbar"));
+  DEBUG_PRINT(F("Temperature: "));
+  DEBUG_PRINT(temperature);
+  DEBUG_PRINT_LN(F("°C"));
+  DEBUG_PRINT(F("Pressure (absolute): "));
+  DEBUG_PRINT(pressure);
+  DEBUG_PRINT_LN(F(" mbar"));
+  DEBUG_PRINT(F("Pressure (sealevel): "));
+  DEBUG_PRINT(sealevelPressure);
+  DEBUG_PRINT_LN(F(" mbar"));
+  DEBUG_PRINT(F("Altitude: "));
+  DEBUG_PRINT(altitude);
+  DEBUG_PRINT_LN(F(" m"));
+  DEBUG_PRINT(F("Pressure differential: "));
+  DEBUG_PRINT(pressureDifferential);
+  DEBUG_PRINT_LN(F(" mbar"));
 
   float speedOfSound = getSpeedOfSoundForTemperature(temperature);
-  long distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN, speedOfSound);
+  int distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN, speedOfSound);
   if (distance >= ULTRASOUND_UPPER_BOUNDS || distance <= ULTRASOUND_LOWER_BOUNDS)
   {
-    // Serial.println(F("Out of range"));
+    DEBUG_PRINT_LN(F("Out of range"));
   } else
   {
-    // Serial.print(F("Distance: "));
-    // Serial.print(distance);
-    // Serial.println(F(" mm"));
+    DEBUG_PRINT(F("Distance: "));
+    DEBUG_PRINT(distance);
+    DEBUG_PRINT_LN(F(" mm"));
   }
+
+  DEBUG_PRINT(F("Heartrate: "));
+  DEBUG_PRINT(currentHeartrate);
+  DEBUG_PRINT_LN(F(" BPM"));
 
   Record record;
-  CreateRecord(record, temperature, pressure, sealevelPressure, altitude, pressureDifferential, distance);
+  CreateRecord(record, temperature, pressure, sealevelPressure, altitude, pressureDifferential, distance, currentHeartrate);
 
-  while (Firmata.available()) {
-    Firmata.processInput();
-  }
+  DEBUG_PRINT_LN(F("\nOUTPUT:"));
+  DEBUG_PRINT_LN(F("\n--------\n"));
 
-  // Firmata.sendAnalog(FIRMATA_OUTPUT_PIN, record.distance);
-  Firmata.sendAnalog(2, record.temperature);
-  Firmata.sendAnalog(3, record.pressure);
-  Firmata.sendAnalog(4, record.sealevelPressure);
-  Firmata.sendAnalog(5, record.altitude);
-  Firmata.sendAnalog(6, record.pressureDifferential);
-  Firmata.sendAnalog(7, record.distance);
+  serialSendRecord(record);
 
-  // Serial.println(F("\n--------\n"));
+  DEBUG_PRINT_LN(F("\n--------\n"));
   delay(SAMPLING_DELAY);
 }
