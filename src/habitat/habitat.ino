@@ -4,10 +4,14 @@
 // #define DEBUG // This enables debug logging, uncomment to enable debug loggin
 
 #ifdef DEBUG
+  #define SAMPLING_DELAY 500 // Must be greater than 60ms
+
   #define DEBUG_PRINT(x)       Serial.print (x)
   #define DEBUG_PRINT_DEC(x)   Serial.print (x, DEC)
   #define DEBUG_PRINT_LN(x)    Serial.println (x)
 #else
+  #define SAMPLING_DELAY 80 // Must be greater than 60ms
+
   #define DEBUG_PRINT(x)
   #define DEBUG_PRINT_DEC(x)
   #define DEBUG_PRINT_LN(x)
@@ -70,8 +74,6 @@ void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
  ****************/
 
 double sessionPressureBaseline;
-#define SAMPLING_DELAY 500 // Must be greater than 60ms
-
 int currentHeartrate = 60; // Default heart rate to 60, until first measurement completes
 
 /**************************************
