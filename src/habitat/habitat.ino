@@ -1,7 +1,7 @@
 #include <SFE_BMP180.h>
 #include <Wire.h>
 
-#define DEBUG 1 // This enables debug logging
+// #define DEBUG // This enables debug logging, uncomment to enable debug loggin
 
 #ifdef DEBUG
   #define DEBUG_PRINT(x)       Serial.print (x)
@@ -30,6 +30,19 @@ struct dataRecord
 
 typedef struct dataRecord Record;
 
+struct mappedRecord
+{
+  int temperature;
+  int pressure;
+  int sealevelPressure;
+  int altitude;
+  int pressureDifferential;
+  int distance;
+  int heartrate;
+};
+
+typedef struct mappedRecord MappedRecord;
+
 void CreateRecord(Record &record, float temperature, float pressure, float sealevelPressure, float altitude, float pressureDifferential, int distance, int heartrate)
 {
   record.temperature = temperature;
@@ -41,6 +54,16 @@ void CreateRecord(Record &record, float temperature, float pressure, float seale
   record.heartrate = heartrate;
 }
 
+void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
+{
+  mappedRecord.temperature = map(record.temperature, 15, 35, 0, 255);
+  mappedRecord.pressure = map(record.pressure, 970, 1030, 0, 255);
+  mappedRecord.sealevelPressure = map(record.sealevelPressure, 970, 1030, 0, 255);
+  mappedRecord.altitude = map(record.altitude, 0, 2000, 0, 255);;
+  mappedRecord.pressureDifferential = map(abs(record.pressureDifferential), 0, 2, 0, 255);
+  mappedRecord.distance = map(record.distance, 3, 2000, 0, 255);
+  mappedRecord.heartrate = map(record.heartrate, 30, 200, 0, 255);
+}
 
 /****************
  * Global state *
@@ -316,7 +339,7 @@ void setup()
   DEBUG_PRINT_LN(F("\n--------\n"));
 }
 
-void serialSendRecord(Record record)
+void serialSendRecord(MappedRecord record)
 {
   Serial.println(record.temperature);
   Serial.println(record.pressure);
@@ -375,10 +398,13 @@ void loop() {
   Record record;
   CreateRecord(record, temperature, pressure, sealevelPressure, altitude, pressureDifferential, distance, currentHeartrate);
 
+  MappedRecord mappedRecord;
+  CreateMappedRecord(mappedRecord, record);
+
   DEBUG_PRINT_LN(F("\nOUTPUT:"));
   DEBUG_PRINT_LN(F("\n--------\n"));
 
-  serialSendRecord(record);
+  serialSendRecord(mappedRecord);
 
   DEBUG_PRINT_LN(F("\n--------\n"));
   delay(SAMPLING_DELAY);
