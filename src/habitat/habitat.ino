@@ -51,9 +51,13 @@ double sessionPressureBaseline;
 
 int currentHeartrate = 60; // Default heart rate to 60, until first measurement completes
 
-/*********************************
- * BMP180 Barometic sensor setup *
- *********************************/
+/**************************************
+ * BMP180 Barometic sensor setup      *
+ *                                    *
+ * CL connects to Arduino Analog IN 5 *
+ * DA connects to Arduino Analog IN 4 *
+ *                                    *
+ **************************************/
 
 SFE_BMP180 barometer; // BPM180 pressure struct
 #define BAROMETER_ALTITUDE 52.1 // Altitude of Stockholm, Sweden in meters
