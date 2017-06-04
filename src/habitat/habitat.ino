@@ -17,6 +17,8 @@
   #define DEBUG_PRINT_LN(x)
 #endif
 
+#define SERIAL_PRINT_COMPOUND_VALUE 1
+
 /***********************************
  * Internal communication protocol *
  ***********************************/
@@ -344,18 +346,17 @@ void setup()
 
 void serialSendRecord(MappedRecord record)
 {
-  bool printAllValues = 0;
-  if (printAllValues)
+  if (SERIAL_PRINT_COMPOUND_VALUE)
   {
+    int compoundOutput = round((record.temperature + record.sealevelPressure + record.distance + record.heartrate) / 4);
+    Serial.print(compoundOutput);
+  } else {
     Serial.println(record.temperature);
     // Serial.println(record.pressure);
     Serial.println(record.sealevelPressure);
     // Serial.println(record.altitude);
     Serial.println(record.distance);
     Serial.println(record.heartrate);
-  } else {
-    double compoundOutput = (record.temperature + record.sealevelPressure + record.distance + record.heartrate) / 4;
-    Serial.println(compoundOutput);
   }
 }
 
