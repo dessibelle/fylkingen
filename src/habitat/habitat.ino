@@ -37,12 +37,12 @@ typedef struct dataRecord Record;
 
 struct mappedRecord
 {
-  int temperature;
-  int pressure;
-  int sealevelPressure;
-  int altitude;
-  int distance;
-  int heartrate;
+  byte temperature;
+  byte pressure;
+  byte sealevelPressure;
+  byte altitude;
+  byte distance;
+  byte heartrate;
 };
 
 typedef struct mappedRecord MappedRecord;
@@ -315,12 +315,12 @@ void CreateRecord(Record &record, float temperature, float pressure, float seale
 
 void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
 {
-  mappedRecord.temperature = map(record.temperature, sessionTemperatureBaseline - 2, sessionTemperatureBaseline + 2, 0, 255);
-  mappedRecord.pressure = map(record.pressure, BAROMETER_BASELINE_PRESSURE - 3, BAROMETER_BASELINE_PRESSURE + 3, 0, 255);
-  mappedRecord.sealevelPressure = map(record.sealevelPressure, sessionPressureBaseline - 3, sessionPressureBaseline + 3, 0, 255);
-  mappedRecord.altitude = map(record.altitude, 0, BAROMETER_ALTITUDE * 2, 0, 255);;
-  mappedRecord.distance = map(record.distance, 3, 2000, 0, 255);
-  mappedRecord.heartrate = map(record.heartrate, 30, 200, 0, 255);
+  mappedRecord.temperature = (byte)map(record.temperature, sessionTemperatureBaseline - 2, sessionTemperatureBaseline + 2, 0, 255);
+  mappedRecord.pressure = (byte)map(record.pressure, BAROMETER_BASELINE_PRESSURE - 3, BAROMETER_BASELINE_PRESSURE + 3, 0, 255);
+  mappedRecord.sealevelPressure = (byte)map(record.sealevelPressure, sessionPressureBaseline - 3, sessionPressureBaseline + 3, 0, 255);
+  mappedRecord.altitude = (byte)map(record.altitude, 0, BAROMETER_ALTITUDE * 2, 0, 255);;
+  mappedRecord.distance = (byte)map(record.distance, 3, 2000, 0, 255);
+  mappedRecord.heartrate = (byte)map(record.heartrate, 30, 200, 0, 255);
 }
 
 /****************
@@ -348,15 +348,15 @@ void serialSendRecord(MappedRecord record)
 {
   if (SERIAL_PRINT_COMPOUND_VALUE)
   {
-    int compoundOutput = round((record.temperature + record.sealevelPressure + record.distance + record.heartrate) / 4);
-    Serial.print(compoundOutput);
+    byte compoundOutput = (byte)round((record.temperature + record.sealevelPressure + record.distance + record.heartrate) / 4);
+    Serial.write(compoundOutput);
   } else {
-    Serial.println(record.temperature);
-    // Serial.println(record.pressure);
-    Serial.println(record.sealevelPressure);
-    // Serial.println(record.altitude);
-    Serial.println(record.distance);
-    Serial.println(record.heartrate);
+    Serial.write(record.temperature);
+    // Serial.write(record.pressure);
+    Serial.write(record.sealevelPressure);
+    // Serial.write(record.altitude);
+    Serial.write(record.distance);
+    Serial.write(record.heartrate);
   }
 }
 
