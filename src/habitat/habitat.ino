@@ -27,7 +27,6 @@ struct dataRecord
   float pressure;
   float sealevelPressure;
   float altitude;
-  float pressureDifferential;
   int distance;
   int heartrate;
 };
@@ -40,40 +39,18 @@ struct mappedRecord
   int pressure;
   int sealevelPressure;
   int altitude;
-  int pressureDifferential;
   int distance;
   int heartrate;
 };
 
 typedef struct mappedRecord MappedRecord;
 
-void CreateRecord(Record &record, float temperature, float pressure, float sealevelPressure, float altitude, float pressureDifferential, int distance, int heartrate)
-{
-  record.temperature = temperature;
-  record.pressure = pressure;
-  record.sealevelPressure = sealevelPressure;
-  record.altitude = altitude;
-  record.pressureDifferential = pressureDifferential;
-  record.distance = distance;
-  record.heartrate = heartrate;
-}
-
-void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
-{
-  mappedRecord.temperature = map(record.temperature, 15, 35, 0, 255);
-  mappedRecord.pressure = map(record.pressure, 970, 1030, 0, 255);
-  mappedRecord.sealevelPressure = map(record.sealevelPressure, 970, 1030, 0, 255);
-  mappedRecord.altitude = map(record.altitude, 0, 2000, 0, 255);;
-  mappedRecord.pressureDifferential = map(abs(record.pressureDifferential), 0, 2, 0, 255);
-  mappedRecord.distance = map(record.distance, 3, 2000, 0, 255);
-  mappedRecord.heartrate = map(record.heartrate, 30, 200, 0, 255);
-}
-
 /****************
  * Global state *
  ****************/
 
 double sessionPressureBaseline;
+double sessionTemperatureBaseline;
 int currentHeartrate = 60; // Default heart rate to 60, until first measurement completes
 
 /**************************************
@@ -320,6 +297,30 @@ long logHeartbeat(unsigned char idx)
   return max(lastValue - thisValue, 0);
 }
 
+/*********************
+ * Utility functions *
+ *********************/
+
+void CreateRecord(Record &record, float temperature, float pressure, float sealevelPressure, float altitude, int distance, int heartrate)
+{
+  record.temperature = temperature;
+  record.pressure = pressure;
+  record.sealevelPressure = sealevelPressure;
+  record.altitude = altitude;
+  record.distance = distance;
+  record.heartrate = heartrate;
+}
+
+void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
+{
+  mappedRecord.temperature = map(record.temperature, sessionTemperatureBaseline - 2, sessionTemperatureBaseline + 2, 0, 255);
+  mappedRecord.pressure = map(record.pressure, BAROMETER_BASELINE_PRESSURE - 3, BAROMETER_BASELINE_PRESSURE + 3, 0, 255);
+  mappedRecord.sealevelPressure = map(record.sealevelPressure, sessionPressureBaseline - 3, sessionPressureBaseline + 3, 0, 255);
+  mappedRecord.altitude = map(record.altitude, 0, BAROMETER_ALTITUDE * 2, 0, 255);;
+  mappedRecord.distance = map(record.distance, 3, 2000, 0, 255);
+  mappedRecord.heartrate = map(record.heartrate, 30, 200, 0, 255);
+}
+
 /****************
  * Main program *
  ****************/
@@ -343,27 +344,43 @@ void setup()
 
 void serialSendRecord(MappedRecord record)
 {
-  Serial.println(record.temperature);
-  Serial.println(record.pressure);
-  Serial.println(record.sealevelPressure);
-  Serial.println(record.altitude);
-  Serial.println(record.pressureDifferential);
-  Serial.println(record.distance);
-  Serial.println(record.heartrate);
+  bool printAllValues = 0;
+  if (printAllValues)
+  {
+    Serial.println(record.temperature);
+    // Serial.println(record.pressure);
+    Serial.println(record.sealevelPressure);
+    // Serial.println(record.altitude);
+    Serial.println(record.distance);
+    Serial.println(record.heartrate);
+  } else {
+    double compoundOutput = (record.temperature + record.sealevelPressure + record.distance + record.heartrate) / 4;
+    Serial.println(compoundOutput);
+  }
 }
 
 void loop() {
-  double temperature, pressure, sealevelPressure, altitude, pressureDifferential;
+  double temperature, pressure, sealevelPressure, altitude;
   getTemeprature(temperature);
   getPressure(pressure, temperature, BAROMETER_OVERSAMPLING_MODE);
   sealevelPressure = getSealevelPressure(pressure, BAROMETER_ALTITUDE);
   altitude = getAltitude(pressure, BAROMETER_BASELINE_PRESSURE);
 
+
+  if (!sessionTemperatureBaseline)
+  {
+    sessionTemperatureBaseline = temperature;
+    DEBUG_PRINT(F("Session pressure baseline: "));
+    DEBUG_PRINT(sessionTemperatureBaseline);
+    DEBUG_PRINT_LN(F("°C"));
+  }
   if (!sessionPressureBaseline)
   {
     sessionPressureBaseline = sealevelPressure;
+    DEBUG_PRINT(F("Session pressure baseline: "));
+    DEBUG_PRINT(sessionPressureBaseline);
+    DEBUG_PRINT_LN(F("mbar"));
   }
-  pressureDifferential = sealevelPressure - sessionPressureBaseline;
 
   DEBUG_PRINT(F("Temperature: "));
   DEBUG_PRINT(temperature);
@@ -377,9 +394,6 @@ void loop() {
   DEBUG_PRINT(F("Altitude: "));
   DEBUG_PRINT(altitude);
   DEBUG_PRINT_LN(F(" m"));
-  DEBUG_PRINT(F("Pressure differential: "));
-  DEBUG_PRINT(pressureDifferential);
-  DEBUG_PRINT_LN(F(" mbar"));
 
   float speedOfSound = getSpeedOfSoundForTemperature(temperature);
   int distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN, speedOfSound);
@@ -398,7 +412,7 @@ void loop() {
   DEBUG_PRINT_LN(F(" BPM"));
 
   Record record;
-  CreateRecord(record, temperature, pressure, sealevelPressure, altitude, pressureDifferential, distance, currentHeartrate);
+  CreateRecord(record, temperature, pressure, sealevelPressure, altitude, distance, currentHeartrate);
 
   MappedRecord mappedRecord;
   CreateMappedRecord(mappedRecord, record);
