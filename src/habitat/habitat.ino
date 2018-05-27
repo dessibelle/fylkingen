@@ -1,7 +1,9 @@
-#include <SFE_BMP180.h>
-#include <Wire.h>
+#define USE_ARDUINO_INTERRUPTS true    // Set-up low-level interrupts for most acurate BPM math.
+#include <PulseSensorPlayground.h>     // Includes the PulseSensorPlayground Library.
 
 // #define DEBUG // This enables debug logging, uncomment to enable debug loggin
+#define SERIAL_PLOT_VALUES 0
+#define SERIAL_OUTPUT_COMPOUND_VALUE 1
 
 #ifdef DEBUG
   #define SAMPLING_DELAY 500 // Must be greater than 60ms
@@ -17,7 +19,15 @@
   #define DEBUG_PRINT_LN(x)
 #endif
 
-#define SERIAL_PRINT_COMPOUND_VALUE 1
+
+#define TEMPERATURE_DEG_C     22
+
+#define MAP_DISTANCE_MM_MIN       3
+#define MAP_DISTANCE_MM_MAX       800
+#define MAP_HEARTRATE_BPM_MIN     30
+#define MAP_HEARTRATE_BPM_MAX     200
+#define MAP_AMPLITUDE_MIN         250
+#define MAP_AMPLITUDE_MAX         1000
 
 /***********************************
  * Internal communication protocol *
@@ -25,48 +35,28 @@
 
 struct dataRecord
 {
-  float temperature;
-  float pressure;
-  float sealevelPressure;
-  float altitude;
   int distance;
   int heartrate;
+  int amplitude;
 };
 
 typedef struct dataRecord Record;
 
 struct mappedRecord
 {
-  byte temperature;
-  byte pressure;
-  byte sealevelPressure;
-  byte altitude;
   byte distance;
   byte heartrate;
+  byte amplitude;
 };
 
 typedef struct mappedRecord MappedRecord;
+
 
 /****************
  * Global state *
  ****************/
 
-double sessionPressureBaseline;
-double sessionTemperatureBaseline;
-int currentHeartrate = 60; // Default heart rate to 60, until first measurement completes
-
-/**************************************
- * BMP180 Barometic sensor setup      *
- *                                    *
- * CL connects to Arduino Analog IN 5 *
- * DA connects to Arduino Analog IN 4 *
- *                                    *
- **************************************/
-
-SFE_BMP180 barometer; // BPM180 pressure struct
-#define BAROMETER_ALTITUDE 52.1 // Altitude of Stockholm, Sweden in meters
-#define BAROMETER_BASELINE_PRESSURE 1013.25 // "Standard" pressure, the baseline used universally, is 1013.25 hPa
-#define BAROMETER_OVERSAMPLING_MODE 3 // 0 to 3, higher numbers are slower, higher-res outputs
+float gSpeedOfSound = 331;
 
 /***********************************
  * HC-SR04 Ultrasound sensor setup *
@@ -92,105 +82,20 @@ SFE_BMP180 barometer; // BPM180 pressure struct
 #define ULTRASOUND_PULSE_TIMEOUT 11500 // Almost 2 m at 340 m/s
 
 /**************************************
- * Grove - Ear-clip Heart Rate sensor *
+ * PulseSensor.com heart rate monitor *
  **************************************/
 
-#define HEARTRATE_INTERRUPT_PIN 2          // Pin used for heartreate sensor
-#define HEARTRATE_MAX_PULSE_INTERVAL 2000  // No heartbeat for this many ms - reset counter
-#define HEARTRATE_NUM_SAMPLES 20           // Number of samples needed for calculation
-
-unsigned char heartrateCounter;
-unsigned long heartrateSamples[HEARTRATE_NUM_SAMPLES];
-
-/*************************************
- * BMP180 Barometic sensor functions *
- *************************************/
-
-void setupBarometricSensor()
-{
-  if (barometer.begin())
-  {
-    DEBUG_PRINT(F("BMP180 init success, altitude: "));
-    DEBUG_PRINT(BAROMETER_ALTITUDE);
-    DEBUG_PRINT(F(" m, baseline (sealevel) pressure: "));
-    DEBUG_PRINT(BAROMETER_BASELINE_PRESSURE);
-    DEBUG_PRINT(F(" mbar, oversampling mode: "));
-    DEBUG_PRINT_LN(BAROMETER_OVERSAMPLING_MODE);
-  } else
-  {
-    // Oops, something went wrong, this is usually a connection problem
-    DEBUG_PRINT_LN(F("BMP180 init fail\n\n"));
-    while(1); // Pause forever.
-  }
-}
-
+PulseSensorPlayground pulseSensor;
 
 /*
- * Sets supplied argument to the BMP180 temperature, in degrees Celcius
- * Returns 1 on success, and 0 on failure
+ * Determine which Signal to "count as a beat" and which to ignore.
+ * Use the "Gettting Started Project" to fine-tune Threshold Value beyond default setting.
+ * Otherwise leave the default "550" value.
  */
-short getTemeprature(double &temperature)
-{
-  char status = 0;
-  char measurementDelay = barometer.startTemperature();
-  if (measurementDelay > 0) {
-    delay(measurementDelay); // Wait for the measurement to complete
-    status = barometer.getTemperature(temperature);
-    if (status != 1)
-    {
-      DEBUG_PRINT_LN(F("Error retrieving temperature measurement\n"));
-    }
-  } else
-  {
-    DEBUG_PRINT_LN(F("Error starting temperature measurement\n"));
-  }
-  return status;
-}
 
-/*
- * Sets supplied argument to the BMP180 absolute pressure, in milli bar
- * Returns 1 on success, and 0 on failure
- */
-short getPressure(double &pressure, double temperature, char oversamplingMode)
-{
-  char status = 0;
-  // Start a pressure measurement using the specified oversamplingMode, from 0 to 3 (highest res, longest wait).
-  // If request is successful, the number of ms to wait is returned. Otherwise  0 is returned.
-  char measurementDelay = barometer.startPressure(oversamplingMode);
-  if (measurementDelay > 0)
-  {
-    delay(measurementDelay); // Wait for the measurement to complete
-    status = barometer.getPressure(pressure, temperature);
-    if (status != 1)
-    {
-      DEBUG_PRINT_LN(F("Error retrieving pressure measurement\n"));
-    }
-  } else
-  {
-    DEBUG_PRINT_LN(F("Error starting pressure measurement\n"));
-  }
-  return status;
-}
+#define HEARTRATE_ANALOG_INPUT_PIN  0       // Pin used for heartreate sensor, 0 means A0 on the Arduino
+#define HEARTRATE_NOISE_TRESHOLD    550
 
-/*
- * The pressure sensor returns abolute pressure, which varies with altitude.
- * To remove the effects of altitude, use the sealevel function and your current altitude.
- * This number is commonly used in weather reports.
- *
- * Returns the sealevel compensated pressure in milli bar
- */
-double getSealevelPressure(double pressure, double altitude)
-{
-  return barometer.sealevel(pressure, altitude);
-}
-
-/*
- * Returns the altitude in metres above sea level
- */
-double getAltitude(double absolutePressure, double pressureBaseline)
-{
-  return barometer.altitude(absolutePressure, pressureBaseline);
-}
 
 /********************************
  * HC-SR04 Ultrasound functions *
@@ -241,86 +146,44 @@ float getSpeedOfSoundForTemperature(float temperature)
 /*
  * Returns the ping distance of the HC-SR04 ultrasound sensor
  */
-long getUltrasoundPingDistance(short trigPin, short echoPin, float speedOfSound)
+long getUltrasoundPingDistance(short trigPin, short echoPin)
 {
   long duration = getUltrasoundPingDuration(trigPin, echoPin);
-  return (duration / 2) / (1000 / speedOfSound);
+  return (duration / 2) / (1000 / gSpeedOfSound);
 }
 
 /************************************************
- * Grove - Ear-clip Heart Rate sensor functions *
+ * PulseSensor.com heart rate monitor functions *
  ************************************************/
 
-void resetHeartrateSamplesArray()
+void setupHeartrate(byte inputPin, short treshold)
 {
-  for (unsigned char i = 0; i < HEARTRATE_NUM_SAMPLES; i++)
-  {
-    heartrateSamples[i] = 0;
+  // resetHeartrateSamplesArray();
+
+  pulseSensor.analogInput(inputPin);
+  pulseSensor.setThreshold((int)treshold);
+
+  if (!pulseSensor.begin()) {
+    Serial.println("Error initializing pulse sensor!");  //This prints one time at Arduino power-up,  or on Arduino reset.
   }
-  heartrateCounter = 0;
-}
-
-void setupHeartrate(byte interruptPin)
-{
-  resetHeartrateSamplesArray();
-
-  pinMode(interruptPin, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(interruptPin), heartrateInterrupt, RISING);
-}
-
-void heartrateInterrupt()
-{
-  long delta = logHeartbeat(heartrateCounter);
-
-  if (delta >= HEARTRATE_MAX_PULSE_INTERVAL)
-  {
-    /* Sample took to long, something is wrong. Start over. */
-    return resetHeartrateSamplesArray();
-  }
-
-  heartrateCounter++;
-
-  if (heartrateCounter >= HEARTRATE_NUM_SAMPLES)
-  {
-    // Set global state
-    currentHeartrate = (HEARTRATE_NUM_SAMPLES * 60000) / (heartrateSamples[HEARTRATE_NUM_SAMPLES - 1] - heartrateSamples[0]);
-    heartrateCounter = 0;
-  }
-}
-
-long logHeartbeat(unsigned char idx)
-{
-  heartrateSamples[idx] = millis();
-
-  short lastIdx = !!idx ? idx - 1 : HEARTRATE_NUM_SAMPLES - 1;
-  unsigned long thisValue = heartrateSamples[idx];
-  unsigned long lastValue = heartrateSamples[idx - 1];
-
-  return max(lastValue - thisValue, 0);
 }
 
 /*********************
  * Utility functions *
  *********************/
 
-void CreateRecord(Record &record, float temperature, float pressure, float sealevelPressure, float altitude, int distance, int heartrate)
+void CreateRecord(Record &record, int distance, int heartrate, int amplitude)
 {
-  record.temperature = temperature;
-  record.pressure = pressure;
-  record.sealevelPressure = sealevelPressure;
-  record.altitude = altitude;
   record.distance = distance;
   record.heartrate = heartrate;
+  record.amplitude = amplitude;
 }
 
 void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
 {
-  mappedRecord.temperature = (byte)map(record.temperature, sessionTemperatureBaseline - 2, sessionTemperatureBaseline + 2, 0, 255);
-  mappedRecord.pressure = (byte)map(record.pressure, BAROMETER_BASELINE_PRESSURE - 3, BAROMETER_BASELINE_PRESSURE + 3, 0, 255);
-  mappedRecord.sealevelPressure = (byte)map(record.sealevelPressure, sessionPressureBaseline - 3, sessionPressureBaseline + 3, 0, 255);
-  mappedRecord.altitude = (byte)map(record.altitude, 0, BAROMETER_ALTITUDE * 2, 0, 255);;
-  mappedRecord.distance = (byte)map(record.distance, 3, 2000, 0, 255);
-  mappedRecord.heartrate = (byte)map(record.heartrate, 30, 200, 0, 255);
+  mappedRecord.distance = (byte)map(record.distance, MAP_DISTANCE_MM_MIN, MAP_DISTANCE_MM_MAX, 0, 255);
+  mappedRecord.heartrate = (byte)map(record.heartrate, MAP_HEARTRATE_BPM_MIN, MAP_HEARTRATE_BPM_MAX, 0, 255);
+  mappedRecord.amplitude = (byte)map(record.amplitude, MAP_AMPLITUDE_MIN, MAP_AMPLITUDE_MAX, 0, 255);
 }
 
 /****************
@@ -329,78 +192,64 @@ void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(57600);
 
   DEBUG_PRINT(F("REBOOT, samling delay: "));
   DEBUG_PRINT(SAMPLING_DELAY);
   DEBUG_PRINT_LN(F(" ms"));
 
-  setupBarometricSensor();
-  setupUltrasound(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
-  setupHeartrate(HEARTRATE_INTERRUPT_PIN);
+  gSpeedOfSound = getSpeedOfSoundForTemperature(TEMPERATURE_DEG_C);
 
-  // setupFirmata();
+  setupUltrasound(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
+  setupHeartrate(HEARTRATE_ANALOG_INPUT_PIN, HEARTRATE_NOISE_TRESHOLD);
 
   DEBUG_PRINT_LN(F("\n--------\n"));
 }
 
+byte getCompoundValue(MappedRecord record)
+{
+  return (byte)round((record.distance + record.heartrate + record.amplitude) / 3);
+}
+
 void serialSendRecord(MappedRecord record)
 {
-  if (SERIAL_PRINT_COMPOUND_VALUE)
+  if (SERIAL_OUTPUT_COMPOUND_VALUE)
   {
-    byte compoundOutput = (byte)round((record.temperature + record.sealevelPressure + record.distance + record.heartrate) / 4);
+    byte compoundOutput = getCompoundValue(record);
     Serial.write(compoundOutput);
   } else {
-    Serial.write(record.temperature);
-    // Serial.write(record.pressure);
-    Serial.write(record.sealevelPressure);
-    // Serial.write(record.altitude);
     Serial.write(record.distance);
     Serial.write(record.heartrate);
+    Serial.write(record.amplitude);
+  }
+}
+
+void plotRecord(MappedRecord record)
+{
+  byte compoundOutput = getCompoundValue(record);
+
+  if (SERIAL_OUTPUT_COMPOUND_VALUE)
+  {
+    byte compoundOutput = getCompoundValue(record);
+    Serial.println(compoundOutput);
+  } else {
+    Serial.print(record.distance);
+    Serial.print(",");
+    Serial.print(record.heartrate);
+    Serial.print(",");
+    Serial.print(record.amplitude);
+    Serial.print(",");
+    Serial.print(compoundOutput);
+    Serial.println("");
   }
 }
 
 void loop() {
-  double temperature, pressure, sealevelPressure, altitude;
-  getTemeprature(temperature);
-  getPressure(pressure, temperature, BAROMETER_OVERSAMPLING_MODE);
-  sealevelPressure = getSealevelPressure(pressure, BAROMETER_ALTITUDE);
-  altitude = getAltitude(pressure, BAROMETER_BASELINE_PRESSURE);
-
-
-  if (!sessionTemperatureBaseline)
-  {
-    sessionTemperatureBaseline = temperature;
-    DEBUG_PRINT(F("Session pressure baseline: "));
-    DEBUG_PRINT(sessionTemperatureBaseline);
-    DEBUG_PRINT_LN(F("°C"));
-  }
-  if (!sessionPressureBaseline)
-  {
-    sessionPressureBaseline = sealevelPressure;
-    DEBUG_PRINT(F("Session pressure baseline: "));
-    DEBUG_PRINT(sessionPressureBaseline);
-    DEBUG_PRINT_LN(F("mbar"));
-  }
-
-  DEBUG_PRINT(F("Temperature: "));
-  DEBUG_PRINT(temperature);
-  DEBUG_PRINT_LN(F("°C"));
-  DEBUG_PRINT(F("Pressure (absolute): "));
-  DEBUG_PRINT(pressure);
-  DEBUG_PRINT_LN(F(" mbar"));
-  DEBUG_PRINT(F("Pressure (sealevel): "));
-  DEBUG_PRINT(sealevelPressure);
-  DEBUG_PRINT_LN(F(" mbar"));
-  DEBUG_PRINT(F("Altitude: "));
-  DEBUG_PRINT(altitude);
-  DEBUG_PRINT_LN(F(" m"));
-
-  float speedOfSound = getSpeedOfSoundForTemperature(temperature);
-  int distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN, speedOfSound);
+  int distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
   if (distance >= ULTRASOUND_UPPER_BOUNDS || distance <= ULTRASOUND_LOWER_BOUNDS)
   {
-    DEBUG_PRINT_LN(F("Out of range"));
+    DEBUG_PRINT(F("Out of range:"));
+    DEBUG_PRINT_LN(distance);
   } else
   {
     DEBUG_PRINT(F("Distance: "));
@@ -408,12 +257,34 @@ void loop() {
     DEBUG_PRINT_LN(F(" mm"));
   }
 
-  DEBUG_PRINT(F("Heartrate: "));
-  DEBUG_PRINT(currentHeartrate);
-  DEBUG_PRINT_LN(F(" BPM"));
+  // A beat happened since "last sample"?
+  // if (pulseSensor.sawStartOfBeat()) {}
+
+  pulseSensor.sawStartOfBeat();
+
+  int currentBpm = pulseSensor.getBeatsPerMinute();
+  int currentAmplitude = pulseSensor.getPulseAmplitude();
+  int latestAmplitudeSample = pulseSensor.getLatestSample();
+  int interBeatIntervalMs = pulseSensor.getInterBeatIntervalMs();
+
+  DEBUG_PRINT(F("Current heartrate:"));
+  DEBUG_PRINT(currentBpm);
+  DEBUG_PRINT_LN(F(" bpm"));
+
+  DEBUG_PRINT(F("Current amplitude:"));
+  DEBUG_PRINT(currentAmplitude);
+  DEBUG_PRINT_LN(F(""));
+
+  DEBUG_PRINT(F("Current interBeatIntervalMs:"));
+  DEBUG_PRINT(interBeatIntervalMs);
+  DEBUG_PRINT_LN(F(""));
+
+  DEBUG_PRINT(F("Latest sample:"));
+  DEBUG_PRINT(latestSample);
+  DEBUG_PRINT_LN(F(""));
 
   Record record;
-  CreateRecord(record, temperature, pressure, sealevelPressure, altitude, distance, currentHeartrate);
+  CreateRecord(record, distance, currentBpm, latestAmplitudeSample);
 
   MappedRecord mappedRecord;
   CreateMappedRecord(mappedRecord, record);
@@ -421,8 +292,13 @@ void loop() {
   DEBUG_PRINT_LN(F("\nOUTPUT:"));
   DEBUG_PRINT_LN(F("\n--------\n"));
 
-  serialSendRecord(mappedRecord);
+  if (SERIAL_PLOT_VALUES) {
+    plotRecord(mappedRecord);
+  } else {
+    serialSendRecord(mappedRecord);
+  }
 
   DEBUG_PRINT_LN(F("\n--------\n"));
+
   delay(SAMPLING_DELAY);
 }
