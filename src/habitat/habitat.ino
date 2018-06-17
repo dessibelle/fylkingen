@@ -26,7 +26,7 @@
 
 #define TEMPERATURE_DEG_C     22
 
-#define MAP_DISTANCE_MM_MIN       3
+#define MAP_DISTANCE_MM_MIN       30
 #define MAP_DISTANCE_MM_MAX       800
 #define MAP_HEARTRATE_BPM_MIN     30
 #define MAP_HEARTRATE_BPM_MAX     200
