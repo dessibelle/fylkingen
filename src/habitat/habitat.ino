@@ -214,13 +214,15 @@ void CreateRecord(Record &record, int distance, int heartrate, int amplitude)
   record.distance = distance;
   record.heartrate = heartrate;
   record.amplitude = amplitude;
+  record.killswitch = distance > MAP_DISTANCE_MM_MAX || distance <= ULTRASOUND_LOWER_BOUNDS;
 }
 
 void CreateMappedRecord(MappedRecord &mappedRecord, Record record)
 {
-  mappedRecord.distance = (byte)map(record.distance, MAP_DISTANCE_MM_MIN, MAP_DISTANCE_MM_MAX, 0, 255);
-  mappedRecord.heartrate = (byte)map(record.heartrate, MAP_HEARTRATE_BPM_MIN, MAP_HEARTRATE_BPM_MAX, 0, 255);
-  mappedRecord.amplitude = (byte)map(record.amplitude, MAP_AMPLITUDE_MIN, MAP_AMPLITUDE_MAX, 0, 255);
+  mappedRecord.distance = (byte)map(constrain(record.distance, MAP_DISTANCE_MM_MIN, MAP_DISTANCE_MM_MAX), MAP_DISTANCE_MM_MIN, MAP_DISTANCE_MM_MAX, 0, 255);
+  mappedRecord.heartrate = (byte)map(constrain(record.heartrate, MAP_HEARTRATE_BPM_MIN, MAP_HEARTRATE_BPM_MAX), MAP_HEARTRATE_BPM_MIN, MAP_HEARTRATE_BPM_MAX, 0, 255);
+  mappedRecord.amplitude = (byte)map(constrain(record.amplitude, MAP_AMPLITUDE_MIN, MAP_AMPLITUDE_MAX), MAP_AMPLITUDE_MIN, MAP_AMPLITUDE_MAX, 0, 255);
+  mappedRecord.killswitch = record.killswitch;
 }
 
 /****************
