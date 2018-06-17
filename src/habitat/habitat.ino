@@ -269,7 +269,6 @@ void loop() {
   int currentBpm = pulseSensor.getBeatsPerMinute();
   int currentAmplitude = pulseSensor.getPulseAmplitude();
   int latestAmplitudeSample = pulseSensor.getLatestSample();
-  int interBeatIntervalMs = pulseSensor.getInterBeatIntervalMs();
 
   DEBUG_PRINT(F("Current heartrate:"));
   DEBUG_PRINT(currentBpm);
@@ -279,12 +278,8 @@ void loop() {
   DEBUG_PRINT(currentAmplitude);
   DEBUG_PRINT_LN(F(""));
 
-  DEBUG_PRINT(F("Current interBeatIntervalMs:"));
-  DEBUG_PRINT(interBeatIntervalMs);
-  DEBUG_PRINT_LN(F(""));
-
-  DEBUG_PRINT(F("Latest sample:"));
-  DEBUG_PRINT(latestSample);
+  DEBUG_PRINT(F("Latest amplitude sample:"));
+  DEBUG_PRINT(latestAmplitudeSample);
   DEBUG_PRINT_LN(F(""));
 
   Record record;
