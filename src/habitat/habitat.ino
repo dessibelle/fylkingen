@@ -23,7 +23,7 @@
   #define DEBUG_PRINT_LN(x)
 #endif
 
-
+#define ULTRASOUND_NUM_SAMPLES 30
 #define TEMPERATURE_DEG_C     22
 
 #define MAP_DISTANCE_MM_MIN       30
@@ -105,7 +105,37 @@ PulseSensorPlayground pulseSensor;
  * HC-SR04 Ultrasound functions *
  ********************************/
 
+unsigned char ultrasoundCounter;
+unsigned long ultrasoundSamples[ULTRASOUND_NUM_SAMPLES];
+
+void resetUltrasoundSamplesArray() {
+  for (unsigned char i = 0; i < ULTRASOUND_NUM_SAMPLES ; i++)
+  {
+    ultrasoundSamples[i] = 0;
+  }
+  ultrasoundCounter = 0;
+}
+
+void storeUltrasoundSample(unsigned long sample)
+{
+  ultrasoundSamples[ultrasoundCounter] = sample;
+  ultrasoundCounter = (ultrasoundCounter + 1) % ULTRASOUND_NUM_SAMPLES;
+}
+
+long getAverageUltrasoundSample()
+{
+  unsigned long total = 0;
+  for (unsigned char i = 0; i < ULTRASOUND_NUM_SAMPLES ; i++)
+  {
+    total += ultrasoundSamples[i];
+  }
+  return total / ULTRASOUND_NUM_SAMPLES;
+}
+
+
 void setupUltrasound(short trigPin, short echoPin) {
+  resetUltrasoundSamplesArray();
+
   pinMode(trigPin, OUTPUT);
   pinMode(echoPin, INPUT);
 
@@ -261,6 +291,9 @@ void loop() {
     DEBUG_PRINT_LN(F(" mm"));
   }
 
+  storeUltrasoundSample(distance);
+  int averageDistance = (int)getAverageUltrasoundSample();
+
   // A beat happened since "last sample"?
   // if (pulseSensor.sawStartOfBeat()) {}
 
@@ -283,7 +316,7 @@ void loop() {
   DEBUG_PRINT_LN(F(""));
 
   Record record;
-  CreateRecord(record, distance, currentBpm, latestAmplitudeSample);
+  CreateRecord(record, averageDistance, currentBpm, latestAmplitudeSample);
 
   MappedRecord mappedRecord;
   CreateMappedRecord(mappedRecord, record);
