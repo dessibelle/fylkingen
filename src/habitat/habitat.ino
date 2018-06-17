@@ -2,13 +2,13 @@
 #include <PulseSensorPlayground.h>     // Includes the PulseSensorPlayground Library.
 
 // #define DEBUG // This enables debug logging, uncomment to enable debug loggin
-#define SERIAL_PLOT_VALUES 0
-#define SERIAL_OUTPUT_USE_SEPARATORS 1
+#define SERIAL_PLOT_VALUES 1
 #define SERIAL_OUTPUT_COMPOUND_VALUE 0
 #define SERIAL_OUTPUT_ALL_VALUES 0
+#define SERIAL_OUTPUT_USE_SEPARATORS 1
 
-#define SERIAL_PLOT_SAMPLE_SEPARATOR ' '
-#define SERIAL_PLOT_RECORD_SEPARATOR '\n'
+#define SERIAL_PLOT_SAMPLE_SEPARATOR F(" ")
+#define SERIAL_PLOT_RECORD_SEPARATOR F("\r\n")
 
 
 #ifdef DEBUG
