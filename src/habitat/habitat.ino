@@ -2,7 +2,8 @@
 #include <PulseSensorPlayground.h>     // Includes the PulseSensorPlayground Library.
 
 // #define DEBUG // This enables debug logging, uncomment to enable debug loggin
-#define SERIAL_PLOT_VALUES 1
+#define SERIAL_PLOT_VALUES 0
+#define SERIAL_OUTPUT_USE_SEPARATORS 1
 #define SERIAL_OUTPUT_COMPOUND_VALUE 0
 #define SERIAL_OUTPUT_ALL_VALUES 0
 
@@ -256,10 +257,23 @@ void serialSendRecord(MappedRecord record)
   {
     byte compoundOutput = getCompoundValue(record);
     Serial.write(compoundOutput);
+    if (SERIAL_OUTPUT_USE_SEPARATORS) {
+      Serial.print(SERIAL_PLOT_RECORD_SEPARATOR);
+    }
   } else {
-    Serial.write(record.distance);
-    Serial.write(record.heartrate);
-    Serial.write(record.amplitude);
+    if (SERIAL_OUTPUT_USE_SEPARATORS) {
+      Serial.write(record.distance);
+      Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+      Serial.write(record.heartrate);
+      Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+      Serial.write(record.amplitude);
+      Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+      Serial.print(SERIAL_PLOT_RECORD_SEPARATOR);
+    } else {
+      Serial.write(record.distance);
+      Serial.write(record.heartrate);
+      Serial.write(record.amplitude);
+    }
   }
 }
 
