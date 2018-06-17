@@ -4,6 +4,7 @@
 // #define DEBUG // This enables debug logging, uncomment to enable debug loggin
 #define SERIAL_PLOT_VALUES 1
 #define SERIAL_OUTPUT_COMPOUND_VALUE 0
+#define SERIAL_OUTPUT_ALL_VALUES 0
 
 #define SERIAL_PLOT_SAMPLE_SEPARATOR ' '
 #define SERIAL_PLOT_RECORD_SEPARATOR '\n'
@@ -42,6 +43,7 @@ struct dataRecord
   int distance;
   int heartrate;
   int amplitude;
+  bool killswitch;
 };
 
 typedef struct dataRecord Record;
@@ -51,6 +53,7 @@ struct mappedRecord
   byte distance;
   byte heartrate;
   byte amplitude;
+  bool killswitch;
 };
 
 typedef struct mappedRecord MappedRecord;
@@ -260,8 +263,6 @@ void serialSendRecord(MappedRecord record)
 
 void plotRecord(MappedRecord record)
 {
-  byte compoundOutput = getCompoundValue(record);
-
   if (SERIAL_OUTPUT_COMPOUND_VALUE)
   {
     byte compoundOutput = getCompoundValue(record);
@@ -272,11 +273,42 @@ void plotRecord(MappedRecord record)
     Serial.print(record.heartrate);
     Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
     Serial.print(record.amplitude);
+    // byte compoundOutput = getCompoundValue(record);
+    // Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+    // Serial.print(compoundOutput);
     Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
-    Serial.print(compoundOutput);
+    Serial.print(record.killswitch);
     Serial.print(SERIAL_PLOT_RECORD_SEPARATOR);
   }
 }
+
+void plotMappedAndRawRecord(MappedRecord mappedRecord, Record record)
+{
+  Serial.print(mappedRecord.distance);
+  Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  Serial.print(mappedRecord.heartrate);
+  Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  Serial.print(mappedRecord.amplitude);
+  // byte compoundOutput = getCompoundValue(record);
+  // Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  // Serial.print(compoundOutput);
+  Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  Serial.print(mappedRecord.killswitch);
+  Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+
+  Serial.print(record.distance);
+  Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  Serial.print(record.heartrate);
+  Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  Serial.print(record.amplitude);
+  // byte compoundOutput = getCompoundValue(record);
+  // Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  // Serial.print(compoundOutput);
+  Serial.print(SERIAL_PLOT_SAMPLE_SEPARATOR);
+  Serial.print(record.killswitch);
+  Serial.print(SERIAL_PLOT_RECORD_SEPARATOR);
+}
+
 
 void loop() {
   int distance = getUltrasoundPingDistance(ULTRASOUND_TRIG_PIN, ULRTASOUND_ECHO_PIN);
@@ -325,7 +357,11 @@ void loop() {
   DEBUG_PRINT_LN(F("\n--------\n"));
 
   if (SERIAL_PLOT_VALUES) {
-    plotRecord(mappedRecord);
+    if (SERIAL_OUTPUT_ALL_VALUES) {
+      plotMappedAndRawRecord(mappedRecord, record);
+    } else {
+      plotRecord(mappedRecord);
+    }
   } else {
     serialSendRecord(mappedRecord);
   }
